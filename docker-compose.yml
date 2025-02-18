@@ -160,8 +160,6 @@ services:
       - laravel
 
 
-
-
   prometheus:
     image: prom/prometheus
     container_name: prometheus

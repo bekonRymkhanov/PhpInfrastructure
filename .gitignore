@@ -1,0 +1,7 @@
+.env
+idea/
+postgresql/
+pg_wal/
+pg_xact/
+*.conf
+*.opts
