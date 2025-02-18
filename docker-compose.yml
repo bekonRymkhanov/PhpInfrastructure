@@ -1,0 +1,229 @@
+services:
+  nginx:
+    container_name: "nginx"
+    build:
+      context: ./dockerfiles
+      dockerfile: nginx.dockerfile
+      args:
+        - UID=${UID:-1000}
+        - GID=${GID:-1000}
+    ports:
+      - "${FORWARD_NGINX_PORT:-80}:80"
+    volumes:
+      - ./src:/var/www/html:delegated
+      - ./ssl:/etc/ssl
+    depends_on:
+      - php
+      - redis
+      - postgresql
+    networks:
+      - laravel
+    restart: unless-stopped
+
+  postgresql:
+    image: postgres:16.2
+    container_name: postgresql
+    environment:
+      POSTGRES_DB: ${DB_DATABASE}
+      POSTGRES_USER: ${DB_USERNAME}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      PGDATA: /data/postgres
+      TZ: Asia/Almaty
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -d ${DB_DATABASE} -U ${DB_USERNAME}" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - postgresql:/data/postgres
+    ports:
+      - "${FORWARD_DB_PORT:-5434}:5432"
+    networks:
+      - laravel
+    restart: unless-stopped
+
+  php:
+    container_name: "php"
+    build:
+      context: ./dockerfiles
+      dockerfile: php.dockerfile
+      args:
+        - UID=${UID:-1000}
+        - GID=${GID:-1000}
+    ports:
+      - "${FORWARD_PHP_PORT:-9000}:9000"
+    volumes:
+      - ./src:/var/www/html:delegated
+      - ./dockerfiles/configs/custom.ini:/usr/local/etc/php/conf.d/custom.ini
+    networks:
+      - laravel
+    restart: unless-stopped
+
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: bekarys2004r@gmail.com
+      PGADMIN_DEFAULT_PASSWORD: beka2004
+    volumes:
+      - pgadmin:/var/lib/pgadmin
+    ports:
+      - "${FORWARD_PGADMIN_PORT:-8090}:80"
+    depends_on:
+      postgresql:
+        condition: service_healthy
+    networks:
+      - laravel
+    restart: unless-stopped
+
+  adminer:
+    container_name: adminer
+    image: adminer
+    ports:
+      - "${FORWARD_ADMINER_PORT:-8080}:8080"
+    environment:
+      ADMINER_DEFAULT_DB_DRIVER: pgsql
+      ADMINER_DEFAULT_SERVER: postgresql
+      ADMINER_DEFAULT_DB_NAME: ${DB_DATABASE}
+    depends_on:
+      - postgresql
+    networks:
+      - laravel
+    restart: unless-stopped
+
+  redis:
+    container_name: "redis"
+    image: redis:alpine
+    ports:
+      - "${FORWARD_REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      retries: 3
+      timeout: 5s
+    networks:
+      - laravel
+    restart: unless-stopped
+
+  composer:
+    container_name: "composer"
+    build:
+      context: ./dockerfiles
+      dockerfile: php.dockerfile
+      args:
+        - UID=${UID:-1000}
+        - GID=${GID:-1000}
+    volumes:
+      - ./src:/var/www/html
+    depends_on:
+      - php
+    entrypoint: ["composer"]
+    networks:
+      - laravel
+
+  npm:
+    container_name: "npm"
+    image: node:current-alpine
+    volumes:
+      - ./src:/var/www/html
+    ports:
+      - "${FORWARD_NPM_PORT:-3000}:3000"
+    working_dir: /var/www/html
+    entrypoint: ["npm"]
+    networks:
+      - laravel
+
+  artisan:
+    container_name: "artisan"
+    build:
+      context: ./dockerfiles
+      dockerfile: php.dockerfile
+      args:
+        - UID=${UID:-1000}
+        - GID=${GID:-1000}
+    volumes:
+      - ./src:/var/www/html:delegated
+    depends_on:
+      - postgresql
+      - redis
+    entrypoint: ["php", "/var/www/html/artisan"]
+    networks:
+      - laravel
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: mailhog
+    ports:
+      - '${FORWARD_MAILHOG_PORT:-1025}:1025'
+      - '${FORWARD_MAILHOG_DASHBOARD_PORT:-8025}:8025'
+    networks:
+      - laravel
+
+
+
+
+  prometheus:
+    image: prom/prometheus
+    container_name: prometheus
+    volumes:
+      - ./dockerfiles/prometheus/:/etc/prometheus/
+      - prometheus:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    restart: unless-stopped
+    networks:
+      - laravel
+
+
+
+  postgresql-exporter:
+    image: prometheuscommunity/postgres-exporter
+    container_name: postgresql-exporter
+    ports:
+      - "9187:9187"
+    environment:
+      DATA_SOURCE_NAME: "postgres://${DB_USERNAME}:${DB_PASSWORD}@${DB_HOST}/${DB_DATABASE}?sslmode=disable"
+    depends_on:
+      prometheus:
+        condition: service_started
+      postgresql:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - laravel
+
+
+  grafana:
+    image: grafana/grafana
+    container_name: grafana
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD}
+      GF_USERS_ALLOW_SIGN_UP: false
+    volumes:
+      - grafana:/var/lib/grafana
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    restart: unless-stopped
+    networks:
+      - laravel
+
+
+volumes:
+  postgresql:
+    driver: local
+  pgadmin:
+    driver: local
+  redis:
+    driver: local
+  prometheus:
+  grafana:
+  postgresql-exporter:
+
+networks:
+  laravel:
+    driver: bridge
